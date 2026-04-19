@@ -678,6 +678,29 @@ async function handleAdminMasuk(chatId, nim) {
     logInfo(`Admin deactivated skip mode for ${nim}`);
 }
 
+async function handleAdminHelp(chatId) {
+    const helpMsg = `🔧 *ADMIN COMMANDS*
+
+*Manajemen User:*
+• \`/list\` - Lihat semua user terdaftar
+• \`/cek NIM\` - Cek detail user by NIM
+• \`/acc NIM\` - Aktivasi user pending
+• \`/deactivate NIM\` - Nonaktifkan user
+
+*Tambah User Manual:*
+• \`/addmanual NIM NAMA PASS\`
+  Contoh: \`/addmanual 123456 Budi pass123\`
+
+*Kontrol Mode Libur:*
+• \`/adminlibur NIM\` - Aktifkan mode libur user
+• \`/adminmasuk NIM\` - Nonaktifkan mode libur user
+
+*Info:*
+• \`/adminhelp\` - Panduan ini`;
+
+    await sendTele(chatId, helpMsg);
+}
+
 // === BOT POLLING ===
 let lastUpdateId = 0;
 
@@ -761,6 +784,8 @@ async function handleCommands() {
             else if (chatId === ADMIN_ID) {
                 if (text === '/list') {
                     await handleAdminList(chatId);
+                } else if (text === '/adminhelp') {
+                    await handleAdminHelp(chatId);
                 } else if (text.startsWith('/cek ')) {
                     await handleAdminCek(chatId, parts[1]);
                 } else if (text.startsWith('/acc ')) {
