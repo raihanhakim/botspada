@@ -259,7 +259,13 @@ async function handleStatus(chatId) {
         statsText = `\n\n📈 *Statistik Minggu Ini:*\n✅ Hadir: ${stats.hadir}x\n⏳ Belum Buka: ${stats.belumBuka}x\n📊 Rata-rata: ${stats.avgPersentase}%`;
     }
 
-    const statusMsg = `📊 *Dashboard Personal*\n\n👤 Nama: ${user.nama}\n🆔 NIM: \`${user.nim}\`\n⚡ Status: ${statusMark}${infoTambahan}\n\n📅 *Jadwal Kamu Hari Ini:*\n${jadwalTeks}${statsText}`;
+    // Show skip mode status
+    let skipModeText = '';
+    if (user.skipMode) {
+        skipModeText = '\n\n🏖️ *Mode Libur:* AKTIF (Auto absen dinonaktifkan hari ini)';
+    }
+
+    const statusMsg = `📊 *Dashboard Personal*\n\n👤 Nama: ${user.nama}\n🆔 NIM: \`${user.nim}\`\n⚡ Status: ${statusMark}${infoTambahan}\n\n📅 *Jadwal Kamu Hari Ini:*\n${jadwalTeks}${statsText}${skipModeText}`;
 
     await sendTeleWithKeyboard(chatId, statusMsg, createMainKeyboard().reply_markup.inline_keyboard);
 }
@@ -424,6 +430,8 @@ async function handleHelp(chatId) {
 • \`/status\` - Cek status akun
 • \`/cek\` - Cek absen hari ini
 • \`/sapujagat\` - Scan semua matkul
+• \`/libur\` - Nonaktifkan auto absen hari ini
+• \`/masuk\` - Aktifkan kembali auto absen
 
 *Fitur Tombol:*
 • 📊 Status - Info akun & jadwal
@@ -438,10 +446,57 @@ async function handleHelp(chatId) {
 *Fitur Otomatis:*
 Bot akan otomatis absen sesuai jadwal kuliah kamu setiap hari.
 
+*Tips Penting:*
+Kalau kamu nggak berangkat kuliah, ketik \`/libur\` supaya bot nggak auto absen hari ini. Besok otomatis aktif lagi.
+
 *Butuh Bantuan?*
 Hubungi admin jika ada kendala.`;
 
     await sendTeleWithKeyboard(chatId, helpMsg, createMainKeyboard().reply_markup.inline_keyboard);
+}
+
+async function handleLibur(chatId) {
+    const user = getUserByChatId(chatId);
+
+    if (!user) {
+        return sendTele(chatId, "❌ Belum ada data yang terdaftar. Ketik `/input` dulu ya.");
+    }
+
+    if (user.status !== 'active') {
+        return sendTele(chatId, "❌ Akun kamu belum aktif nih. Ketik `/bayar` dulu yuk.");
+    }
+
+    if (user.skipMode) {
+        return sendTele(chatId, "ℹ️ Mode libur sudah aktif kok. Auto absen hari ini sudah dinonaktifkan.");
+    }
+
+    updateUser(user.nim, {
+        skipMode: true,
+        skipModeDate: new Date().toISOString()
+    });
+
+    await sendTele(chatId, `🏖️ *Mode Libur Aktif!*\n\nOke, aku nggak akan auto absen kamu hari ini. Kamu tetap bisa pakai \`/cek\` atau \`/sapujagat\` kalau mau absen manual.\n\n✅ Besok otomatis aktif lagi, atau ketik \`/masuk\` kalau mau aktifkan sekarang.`);
+    logInfo(`User ${user.nim} activated skip mode`);
+}
+
+async function handleMasuk(chatId) {
+    const user = getUserByChatId(chatId);
+
+    if (!user) {
+        return sendTele(chatId, "❌ Belum ada data yang terdaftar. Ketik `/input` dulu ya.");
+    }
+
+    if (!user.skipMode) {
+        return sendTele(chatId, "ℹ️ Auto absen kamu sudah aktif kok. Nggak perlu diaktifkan lagi.");
+    }
+
+    updateUser(user.nim, {
+        skipMode: false,
+        skipModeDate: null
+    });
+
+    await sendTele(chatId, `✅ *Auto Absen Aktif Kembali!*\n\nOke, mode libur dimatikan. Bot akan kembali auto absen sesuai jadwal kuliah kamu.`);
+    logInfo(`User ${user.nim} deactivated skip mode`);
 }
 
 // === ADMIN COMMANDS ===
@@ -551,6 +606,78 @@ async function handleAdminAddManual(chatId, parts) {
     logInfo(`Admin added manual user: ${nim} - ${nama}`);
 }
 
+async function handleAdminDeactivate(chatId, nim) {
+    const user = getUserByNIM(nim);
+
+    if (!user) {
+        return sendTele(chatId, `❌ NIM ${nim} tidak ditemukan di database.`);
+    }
+
+    if (user.status === 'inactive' || user.status === 'expired') {
+        return sendTele(chatId, `⚠️ NIM ${nim} (${user.nama}) sudah dalam status non-aktif.`);
+    }
+
+    updateUser(nim, {
+        status: 'inactive',
+        deactivatedAt: new Date().toISOString()
+    });
+
+    await sendTele(
+        user.chatId,
+        `🔴 *Akun Dinonaktifkan*\n\nHai ${user.nama}, akun kamu telah dinonaktifkan oleh Admin.\n\nJika ada pertanyaan, silakan hubungi admin.`
+    );
+
+    await sendTele(chatId, `✅ Berhasil menonaktifkan NIM ${nim} (${user.nama}).\n🔴 Status: INACTIVE`);
+    logInfo(`Admin deactivated ${nim}`);
+}
+
+async function handleAdminLibur(chatId, nim) {
+    const user = getUserByNIM(nim);
+
+    if (!user) {
+        return sendTele(chatId, `❌ NIM ${nim} tidak ditemukan di database.`);
+    }
+
+    if (user.skipMode) {
+        return sendTele(chatId, `ℹ️ NIM ${nim} (${user.nama}) sudah dalam mode libur.`);
+    }
+
+    updateUser(nim, {
+        skipMode: true,
+        skipModeDate: new Date().toISOString()
+    });
+
+    await sendTele(
+        user.chatId,
+        `🏖️ *Mode Libur Diaktifkan oleh Admin*\n\nHai ${user.nama}! Admin telah mengaktifkan mode libur untuk kamu.\n\nAuto absen hari ini dinonaktifkan. Besok otomatis aktif lagi, atau ketik \`/masuk\` kalau mau aktifkan sekarang.`
+    );
+
+    await sendTele(chatId, `✅ Berhasil mengaktifkan mode libur untuk NIM ${nim} (${user.nama}).\n🏖️ Auto absen dinonaktifkan.`);
+    logInfo(`Admin activated skip mode for ${nim}`);
+}
+
+async function handleAdminMasuk(chatId, nim) {
+    const user = getUserByNIM(nim);
+
+    if (!user) {
+        return sendTele(chatId, `❌ NIM ${nim} tidak ditemukan di database.`);
+    }
+
+    if (!user.skipMode) {
+        return sendTele(chatId, `ℹ️ NIM ${nim} (${user.nama}) sudah tidak dalam mode libur.`);
+    }
+
+    updateUser(nim, { skipMode: false });
+
+    await sendTele(
+        user.chatId,
+        `✅ *Mode Libur Dinonaktifkan oleh Admin*\n\nHai ${user.nama}! Admin telah menonaktifkan mode libur untuk kamu.\n\nAuto absen akan jalan seperti biasa.`
+    );
+
+    await sendTele(chatId, `✅ Berhasil menonaktifkan mode libur untuk NIM ${nim} (${user.nama}).\n✅ Auto absen aktif kembali.`);
+    logInfo(`Admin deactivated skip mode for ${nim}`);
+}
+
 // === BOT POLLING ===
 let lastUpdateId = 0;
 
@@ -617,6 +744,18 @@ async function handleCommands() {
                 await handleCek(chatId);
             } else if (text === '/sapujagat') {
                 await handleSapuJagat(chatId);
+            } else if (text === '/libur') {
+                await handleLibur(chatId);
+            } else if (text === '/masuk') {
+                await handleMasuk(chatId);
+            } else if (text === '/jadwal') {
+                await handleJadwal(chatId);
+            } else if (text === '/history') {
+                await handleHistory(chatId);
+            } else if (text === '/predict') {
+                await handlePredict(chatId);
+            } else if (text === '/help') {
+                await handleHelp(chatId);
             }
             // Admin commands
             else if (chatId === ADMIN_ID) {
@@ -628,6 +767,12 @@ async function handleCommands() {
                     await handleAdminAcc(chatId, parts[1]);
                 } else if (text.startsWith('/addmanual ')) {
                     await handleAdminAddManual(chatId, parts);
+                } else if (text.startsWith('/deactivate ')) {
+                    await handleAdminDeactivate(chatId, parts[1]);
+                } else if (text.startsWith('/adminlibur ')) {
+                    await handleAdminLibur(chatId, parts[1]);
+                } else if (text.startsWith('/adminmasuk ')) {
+                    await handleAdminMasuk(chatId, parts[1]);
                 }
             }
         }
@@ -652,6 +797,10 @@ cron.schedule('*/5 * * * *', async () => {
             const sisaHari = hitungSisaHari(u.expireAt);
             if (sisaHari <= 0) {
                 updateUser(u.nim, { status: 'expired' });
+                return false;
+            }
+            // Skip user yang aktifkan mode libur
+            if (u.skipMode) {
                 return false;
             }
             return true;
@@ -708,6 +857,27 @@ cron.schedule('0 9 * * *', async () => {
         logInfo('Expiry reminder check completed');
     } catch (error) {
         logError('Expiry reminder error', error);
+    }
+});
+
+// === AUTO RESET SKIP MODE ===
+cron.schedule('0 0 * * *', async () => {
+    try {
+        logInfo('Running skip mode reset...');
+
+        const users = getUsers().filter(u => u.skipMode === true);
+
+        for (const user of users) {
+            updateUser(user.nim, {
+                skipMode: false,
+                skipModeDate: null
+            });
+            logInfo(`Auto-reset skip mode for ${user.nim}`);
+        }
+
+        logInfo(`Skip mode reset completed for ${users.length} users`);
+    } catch (error) {
+        logError('Skip mode reset error', error);
     }
 });
 

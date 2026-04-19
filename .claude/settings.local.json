@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:pakasir.com)"
+      "WebFetch(domain:pakasir.com)",
+      "Bash(git commit *)"
     ]
   }
 }
