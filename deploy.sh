@@ -27,9 +27,9 @@ git push origin main
 echo "✅ Pushed to GitHub successfully!"
 
 # VPS Configuration (edit these)
-VPS_USER="your_vps_user"
-VPS_HOST="your_vps_ip"
-VPS_PATH="/path/to/botspada"
+VPS_USER="root"
+VPS_HOST="206.189.32.231"
+VPS_PATH="/root/botspada"
 BOT_NAME="botspada"
 
 echo ""
