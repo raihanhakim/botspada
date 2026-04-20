@@ -296,7 +296,7 @@ async function handleCek(chatId) {
         if (result.message) {
             await sendTele(chatId, result.message);
         }
-        await new Promise(r => setTimeout(r, 3000));
+        // Queue system sudah handle delay
     }
 }
 
@@ -322,7 +322,7 @@ async function handleSapuJagat(chatId) {
         if (result.status === 'success' && result.message) {
             await sendTele(chatId, result.message);
         }
-        await new Promise(r => setTimeout(r, 3000));
+        // Queue system sudah handle delay
     }
 
     await sendTele(chatId, `✅ Scan Sapu Jagat selesai! Kalau tadi nemu absen yang nyasar di hari ini, udah langsung aku sikat.`);
@@ -433,6 +433,11 @@ async function handleHelp(chatId) {
 • \`/libur\` - Nonaktifkan auto absen hari ini
 • \`/masuk\` - Aktifkan kembali auto absen
 
+*Pengaturan Akun:*
+• \`/updatepass PASSWORD_BARU\` - Ganti password
+• \`/updatenama NAMA_BARU\` - Ganti nama
+• \`/hapus\` - Hapus akun (tidak bisa dibatalkan)
+
 *Fitur Tombol:*
 • 📊 Status - Info akun & jadwal
 • ✅ Cek Absen - Cek absen manual
@@ -541,7 +546,7 @@ async function handleAdminCek(chatId, targetNim) {
         if (result.message) {
             await sendTele(chatId, result.message);
         }
-        await new Promise(r => setTimeout(r, 3000));
+        // Queue system sudah handle delay, tidak perlu delay tambahan
     }
 }
 
@@ -678,6 +683,68 @@ async function handleAdminMasuk(chatId, nim) {
     logInfo(`Admin deactivated skip mode for ${nim}`);
 }
 
+// === USER ACCOUNT MANAGEMENT ===
+async function handleUpdatePass(chatId, parts) {
+    const user = getUserByChatId(chatId);
+    if (!user) {
+        await sendTele(chatId, '❌ Kamu belum terdaftar. Gunakan /daftar untuk mendaftar.');
+        return;
+    }
+
+    if (parts.length < 2) {
+        await sendTele(chatId, '❌ Format salah!\n\nGunakan: /updatepass <password_baru>');
+        return;
+    }
+
+    const newPassword = parts.slice(1).join(' ');
+    updateUser(user.nim, { pass: newPassword });
+    await sendTele(chatId, '✅ Password berhasil diupdate!');
+    logInfo(`User ${user.nim} updated password`);
+}
+
+async function handleUpdateNama(chatId, parts) {
+    const user = getUserByChatId(chatId);
+    if (!user) {
+        await sendTele(chatId, '❌ Kamu belum terdaftar. Gunakan /daftar untuk mendaftar.');
+        return;
+    }
+
+    if (parts.length < 2) {
+        await sendTele(chatId, '❌ Format salah!\n\nGunakan: /updatenama <nama_baru>');
+        return;
+    }
+
+    const newName = parts.slice(1).join(' ');
+    updateUser(user.nim, { nama: newName });
+    await sendTele(chatId, `✅ Nama berhasil diupdate menjadi: ${newName}`);
+    logInfo(`User ${user.nim} updated name to ${newName}`);
+}
+
+async function handleHapusAkun(chatId) {
+    const user = getUserByChatId(chatId);
+    if (!user) {
+        await sendTele(chatId, '❌ Kamu belum terdaftar.');
+        return;
+    }
+
+    deleteUser(user.nim);
+    await sendTele(chatId, '✅ Akun kamu berhasil dihapus dari sistem.\n\nGunakan /daftar jika ingin mendaftar lagi.');
+    logInfo(`User ${user.nim} (${user.nama}) deleted their account`);
+}
+
+async function handleAdminHapus(chatId, nim) {
+    const userToDelete = getUserByNIM(nim);
+
+    if (!userToDelete) {
+        await sendTele(chatId, `❌ User dengan NIM ${nim} tidak ditemukan.`);
+        return;
+    }
+
+    deleteUser(nim);
+    await sendTele(chatId, `✅ Akun dengan NIM ${nim} (${userToDelete.nama}) berhasil dihapus.`);
+    logInfo(`Admin deleted user ${nim} (${userToDelete.nama})`);
+}
+
 async function handleAdminHelp(chatId) {
     const helpMsg = `🔧 *ADMIN COMMANDS*
 
@@ -686,6 +753,7 @@ async function handleAdminHelp(chatId) {
 • \`/cek NIM\` - Cek detail user by NIM
 • \`/acc NIM\` - Aktivasi user pending
 • \`/deactivate NIM\` - Nonaktifkan user
+• \`/adminhapus NIM\` - Hapus akun user
 
 *Tambah User Manual:*
 • \`/addmanual NIM NAMA PASS\`
@@ -779,6 +847,12 @@ async function handleCommands() {
                 await handlePredict(chatId);
             } else if (text === '/help') {
                 await handleHelp(chatId);
+            } else if (text.startsWith('/updatepass')) {
+                await handleUpdatePass(chatId, parts);
+            } else if (text.startsWith('/updatenama')) {
+                await handleUpdateNama(chatId, parts);
+            } else if (text === '/hapus') {
+                await handleHapusAkun(chatId);
             }
             // Admin commands
             else if (chatId === ADMIN_ID) {
@@ -798,6 +872,8 @@ async function handleCommands() {
                     await handleAdminLibur(chatId, parts[1]);
                 } else if (text.startsWith('/adminmasuk ')) {
                     await handleAdminMasuk(chatId, parts[1]);
+                } else if (text.startsWith('/adminhapus ')) {
+                    await handleAdminHapus(chatId, parts[1]);
                 }
             }
         }
@@ -839,16 +915,14 @@ cron.schedule('*/5 * * * *', async () => {
 
             if (diff >= -5 && diff <= 60) {
                 for (const u of aktif) {
-                    const result = await prosesAbsen(u, m, false, true);
-                    // Kirim notif jika berhasil absen otomatis
-                    if (result.status === 'success' && result.message) {
+                    const result = await prosesAbsen(u, m, false);
+                    // Kirim notif untuk: berhasil absen, sudah hadir, atau error
+                    if (result.message) {
                         await sendTele(u.chatId, result.message);
                     }
-                    // Delay 3 detik antar user untuk menghindari rate limit
-                    await new Promise(r => setTimeout(r, 3000));
+                    // Queue system sudah handle delay
                 }
-                // Delay 2 detik antar matkul untuk menghindari spam login
-                await new Promise(r => setTimeout(r, 2000));
+                // Queue system sudah handle delay
             }
         }
 

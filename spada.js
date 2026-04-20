@@ -3,8 +3,15 @@ import { CookieJar } from 'tough-cookie';
 import { wrapper } from 'axios-cookiejar-support';
 import * as cheerio from 'cheerio';
 import { logError, logAbsensi, saveAttendanceHistory, checkAndAwardAchievements } from './database.js';
+import { requestQueue } from './queue.js';
 
 export async function prosesAbsen(mhs, matkul, forceNotif = false, retryCount = 0) {
+    return requestQueue.add(async () => {
+        return await _prosesAbsenInternal(mhs, matkul, forceNotif, retryCount);
+    });
+}
+
+async function _prosesAbsenInternal(mhs, matkul, forceNotif = false, retryCount = 0) {
     const jar = new CookieJar();
     const client = wrapper(axios.create({
         jar,
@@ -24,6 +31,10 @@ export async function prosesAbsen(mhs, matkul, forceNotif = false, retryCount = 
     const bulanIniString = `${namaBulan} ${tahun}`;
 
     try {
+        // Random delay sebelum login (5-8 detik) untuk menghindari rate limit
+        const randomDelay = Math.floor(Math.random() * 3000) + 5000;
+        await new Promise(resolve => setTimeout(resolve, randomDelay));
+
         const loginPage = await client.get('https://spada.untagsmg.ac.id/login/index.php');
         const token = cheerio.load(loginPage.data)('input[name="logintoken"]').val();
 
@@ -31,11 +42,17 @@ export async function prosesAbsen(mhs, matkul, forceNotif = false, retryCount = 
             throw new Error('Login token tidak ditemukan di halaman login');
         }
 
+        // Delay setelah get login page sebelum post login (4-6 detik)
+        await new Promise(resolve => setTimeout(resolve, 4000 + Math.floor(Math.random() * 2000)));
+
         await client.post('https://spada.untagsmg.ac.id/login/index.php', new URLSearchParams({
             username: mhs.nim,
             password: mhs.pass,
             logintoken: token
         }));
+
+        // Delay setelah login sebelum akses halaman attendance (5-7 detik)
+        await new Promise(resolve => setTimeout(resolve, 5000 + Math.floor(Math.random() * 2000)));
 
         const page = await client.get(`https://spada.untagsmg.ac.id/mod/attendance/view.php?id=${matkul.id}`);
         const $ = cheerio.load(page.data);
@@ -81,14 +98,12 @@ export async function prosesAbsen(mhs, matkul, forceNotif = false, retryCount = 
 
         if (sudahAbsenBenaran) {
             logAbsensi(mhs.nim, matkul.nama, 'SUDAH_HADIR', persentase);
-            if (forceNotif) {
-                return {
-                    success: true,
-                    message: buatLaporan(`✅ Aman terkendali! Status kamu udah *HADIR* hari ini.`, hitungHadirBulanIni),
-                    status: 'already_present'
-                };
-            }
-            return { success: true, status: 'already_present' };
+            // Selalu kirim notif untuk status sudah hadir
+            return {
+                success: true,
+                message: buatLaporan(`✅ Aman terkendali! Status kamu udah *HADIR* hari ini.`, hitungHadirBulanIni),
+                status: 'already_present'
+            };
         }
 
         if (linkAbsen) {
@@ -148,7 +163,7 @@ export async function prosesAbsen(mhs, matkul, forceNotif = false, retryCount = 
         if (error.code === 'ETIMEDOUT' && retryCount === 0) {
             logError(`Retrying attendance for ${mhs.nim} - ${matkul.nama}`, new Error('First attempt timed out'));
             await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s before retry
-            return prosesAbsen(mhs, matkul, forceNotif, 1);
+            return _prosesAbsenInternal(mhs, matkul, forceNotif, 1);
         }
 
         if (forceNotif) {
