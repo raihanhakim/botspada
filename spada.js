@@ -4,12 +4,15 @@ import { wrapper } from 'axios-cookiejar-support';
 import * as cheerio from 'cheerio';
 import { logError, logAbsensi, saveAttendanceHistory, checkAndAwardAchievements } from './database.js';
 
-export async function prosesAbsen(mhs, matkul, forceNotif = false) {
+export async function prosesAbsen(mhs, matkul, forceNotif = false, retryCount = 0) {
     const jar = new CookieJar();
     const client = wrapper(axios.create({
         jar,
         withCredentials: true,
-        timeout: 30000
+        timeout: 45000, // Increased from 30s to 45s
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
     }));
 
     const d = new Date();
@@ -24,6 +27,10 @@ export async function prosesAbsen(mhs, matkul, forceNotif = false) {
         const loginPage = await client.get('https://spada.untagsmg.ac.id/login/index.php');
         const token = cheerio.load(loginPage.data)('input[name="logintoken"]').val();
 
+        if (!token) {
+            throw new Error('Login token tidak ditemukan di halaman login');
+        }
+
         await client.post('https://spada.untagsmg.ac.id/login/index.php', new URLSearchParams({
             username: mhs.nim,
             password: mhs.pass,
@@ -33,6 +40,11 @@ export async function prosesAbsen(mhs, matkul, forceNotif = false) {
         const page = await client.get(`https://spada.untagsmg.ac.id/mod/attendance/view.php?id=${matkul.id}`);
         const $ = cheerio.load(page.data);
         const pageText = $.text();
+
+        // Check if login was successful
+        if (pageText.includes('Invalid login') || pageText.includes('Login gagal')) {
+            throw new Error('Login gagal - NIM atau password salah');
+        }
 
         let persentase = "0%";
         const matchPersen = pageText.match(/Persentase dari sesi yang diambil:\s*([\d,.]+%)|Percentage over taken sessions:\s*([\d,.]+%)/i);
@@ -124,11 +136,39 @@ export async function prosesAbsen(mhs, matkul, forceNotif = false) {
         return { success: true, status: 'not_open' };
 
     } catch (error) {
-        logError(`Error proses absen ${mhs.nim} - ${matkul.nama}`, error);
+        const errorMsg = error.code === 'ETIMEDOUT'
+            ? `Timeout saat akses Spada (${error.message})`
+            : error.response?.status
+                ? `HTTP ${error.response.status}: ${error.response.statusText}`
+                : error.message || 'Unknown error';
+
+        logError(`Error proses absen ${mhs.nim} - ${matkul.nama}: ${errorMsg}`, error);
+
+        // Retry once on timeout
+        if (error.code === 'ETIMEDOUT' && retryCount === 0) {
+            logError(`Retrying attendance for ${mhs.nim} - ${matkul.nama}`, new Error('First attempt timed out'));
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s before retry
+            return prosesAbsen(mhs, matkul, forceNotif, 1);
+        }
+
         if (forceNotif) {
+            let userMessage = `❌ Aduh, koneksi ke Spada lagi macet pas buka *${matkul.nama}*.`;
+
+            if (error.code === 'ETIMEDOUT') {
+                userMessage = `⏱️ Timeout pas akses *${matkul.nama}*. Server Spada lagi lambat nih.`;
+            } else if (error.message?.includes('Login gagal') || error.message?.includes('NIM atau password')) {
+                userMessage = `🔐 Login gagal untuk *${matkul.nama}*. Coba cek NIM/password kamu dengan /setting ya.`;
+            } else if (error.message?.includes('Login token tidak ditemukan')) {
+                userMessage = `🔧 Halaman login Spada berubah. Hubungi admin untuk update bot.`;
+            } else if (error.response?.status === 401 || error.response?.status === 403) {
+                userMessage = `🔐 Login gagal untuk *${matkul.nama}*. Coba cek NIM/password kamu ya.`;
+            } else if (error.response?.status >= 500) {
+                userMessage = `🔧 Server Spada lagi error (${error.response.status}) pas buka *${matkul.nama}*.`;
+            }
+
             return {
                 success: false,
-                message: `❌ Aduh, koneksi ke Spada lagi macet pas buka *${matkul.nama}*. Santai, nanti dicoba lagi.`,
+                message: `${userMessage}\n\nSantai, nanti dicoba lagi.`,
                 status: 'error'
             };
         }
