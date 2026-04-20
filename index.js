@@ -844,8 +844,11 @@ cron.schedule('*/5 * * * *', async () => {
                     if (result.status === 'success' && result.message) {
                         await sendTele(u.chatId, result.message);
                     }
-                    await new Promise(r => setTimeout(r, 5000));
+                    // Delay 3 detik antar user untuk menghindari rate limit
+                    await new Promise(r => setTimeout(r, 3000));
                 }
+                // Delay 2 detik antar matkul untuk menghindari spam login
+                await new Promise(r => setTimeout(r, 2000));
             }
         }
 
