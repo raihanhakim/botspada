@@ -4,7 +4,10 @@ class RequestQueue {
         this.queue = [];
         this.processing = false;
         this.lastRequestTime = 0;
-        this.minDelayBetweenRequests = 8000; // Minimum 8 detik antar request
+        // PRIORITAS KEAMANAN MAKSIMAL - Untuk 20-30 NIM
+        // Delay 30-45 detik antar request untuk menghindari banned IP
+        this.minDelayBetweenRequests = 30000; // Base 30 detik (sangat aman)
+        this.maxDelayBetweenRequests = 45000; // Max 45 detik (variasi tinggi)
     }
 
     async add(task) {
@@ -25,12 +28,16 @@ class RequestQueue {
             const { task, resolve, reject } = this.queue.shift();
 
             try {
-                // Pastikan ada jeda minimal antar request
+                // Pastikan ada jeda minimal antar request dengan variasi random
                 const now = Date.now();
                 const timeSinceLastRequest = now - this.lastRequestTime;
 
-                if (timeSinceLastRequest < this.minDelayBetweenRequests) {
-                    const waitTime = this.minDelayBetweenRequests - timeSinceLastRequest;
+                // Random delay antara min dan max untuk menghindari pola konsisten
+                const randomDelay = this.minDelayBetweenRequests +
+                    Math.floor(Math.random() * (this.maxDelayBetweenRequests - this.minDelayBetweenRequests));
+
+                if (timeSinceLastRequest < randomDelay) {
+                    const waitTime = randomDelay - timeSinceLastRequest;
                     await new Promise(r => setTimeout(r, waitTime));
                 }
 
@@ -38,8 +45,8 @@ class RequestQueue {
                 const result = await task();
                 this.lastRequestTime = Date.now();
 
-                // Random delay tambahan 2-4 detik untuk keamanan ekstra
-                const extraDelay = 2000 + Math.floor(Math.random() * 2000);
+                // Random delay tambahan 4-8 detik untuk keamanan ekstra maksimal
+                const extraDelay = 4000 + Math.floor(Math.random() * 4000);
                 await new Promise(r => setTimeout(r, extraDelay));
 
                 resolve(result);
