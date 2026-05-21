@@ -6,6 +6,7 @@ import { sendTele, sendPhoto, getUpdates, checkCooldown, createMainKeyboard, ans
 import { prosesAbsen } from './spada.js';
 import { getJadwalHariIni, getAllMatkul, JADWAL_KULIAH } from './jadwal.js';
 import { createPayment, checkPaymentStatus, generateOrderId } from './pakasir.js';
+import crypto from 'crypto';
 import {
     getUsers,
     saveUsers,
@@ -27,6 +28,9 @@ import {
     hitungSisaHari,
     tambahHari
 } from './utils.js';
+import { safeguard } from './safeguard.js';
+import { handleAdminPanel, handleAdminCallback, handleBroadcast } from './admin.js';
+import { redeemKey, handleAdminGenerateKey } from './keySystem.js';
 
 dotenv.config();
 
@@ -44,43 +48,111 @@ if (!TELE_TOKEN || !ADMIN_ID) {
 const app = express();
 app.use(express.json());
 
-// === WEBHOOK PAKASIR ===
-app.post('/webhook/pakasir', async (req, res) => {
+// === WEBHOOK PAKASIR (HARDENED) ===
+//
+// Pakasir TIDAK provide HMAC signature di webhook, jadi kita pakai 2 lapis defense:
+//  1) Secret di URL path (PAKASIR_WEBHOOK_SECRET) — daftarkan ke Pakasir:
+//     https://domain/webhook/pakasir/<SECRET>
+//     Attacker yang gak tau secret -> 404.
+//  2) Re-verify ke Pakasir transactiondetail API pakai PAKASIR_API_KEY sebelum
+//     ngubah status user. Walaupun secret bocor, attacker tetap gak bisa fake "completed".
+//  3) Amount harus cocok dengan HARGA_BOT.
+//  4) Idempoten: kalau user sudah 'active', skip.
+function safeEqualStr(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const ab = Buffer.from(a);
+    const bb = Buffer.from(b);
+    if (ab.length !== bb.length) return false;
+    return crypto.timingSafeEqual(ab, bb);
+}
+
+async function handlePakasirWebhook(req, res) {
     try {
-        const data = req.body;
-        logInfo(`Pakasir webhook received: ${JSON.stringify(data)}`);
-
-        if (data.status === 'success' || data.status === 'paid' || data.status === 'completed') {
-            const users = getUsers();
-            const user = users.find(u => u.pendingOrderId === data.order_id);
-
-            if (user) {
-                const expireDate = tambahHari(MASA_AKTIF_HARI);
-                updateUser(user.nim, {
-                    status: 'active',
-                    activatedAt: new Date().toISOString(),
-                    expireAt: expireDate,
-                    pendingOrderId: null
-                });
-
-                await sendTele(
-                    user.chatId,
-                    `🎉 *Pembayaran Sukses!*\n\nMakasih ya! Akun kamu (NIM: ${user.nim}) udah resmi *AKTIF*.\n\n⏰ *Masa Aktif:* ${MASA_AKTIF_HARI} hari\n📅 *Berlaku Sampai:* ${new Date(expireDate).toLocaleDateString('id-ID')}\n\nSekarang kamu bisa duduk tenang, urusan absen biar bot yang handle.`
-                );
-
-                const uname = user.username || 'Tanpa Username';
-                const notifAdmin = `💸 *CUAN MASUK BOS!* 💸\n\n👤 *Nama:* ${user.nama}\n🆔 *NIM:* ${user.nim}\n💬 *Tele:* ${uname}\n💳 *Status:* LUNAS (Pakasir)\n💰 *Amount:* Rp${data.amount || HARGA_BOT}\n⏰ *Masa Aktif:* ${MASA_AKTIF_HARI} hari\n\nSistem berhasil mengaktifkan pelanggan baru! 🚀`;
-                await sendTele(ADMIN_ID, notifAdmin);
-
-                logInfo(`User ${user.nim} activated via Pakasir payment`);
-            }
+        const expectedSecret = process.env.PAKASIR_WEBHOOK_SECRET;
+        if (!expectedSecret) {
+            logError('Pakasir webhook secret not configured', new Error('PAKASIR_WEBHOOK_SECRET missing'));
+            return res.status(500).json({ success: false });
+        }
+        const givenSecret = req.params.secret || '';
+        if (!safeEqualStr(givenSecret, expectedSecret)) {
+            // Pura-pura 404
+            return res.status(404).json({ success: false, error: 'not found' });
         }
 
-        res.status(200).json({ success: true });
+        const data = req.body || {};
+        logInfo(`Pakasir webhook received: ${JSON.stringify(data)}`);
+
+        const orderId = String(data.order_id || '');
+        const amount = Number(data.amount || 0);
+        if (!orderId || !amount) {
+            return res.status(400).json({ success: false, error: 'missing fields' });
+        }
+        if (amount !== Number(HARGA_BOT)) {
+            logError(`Pakasir webhook amount mismatch: got ${amount}, expected ${HARGA_BOT}`, new Error('amount mismatch'));
+            return res.status(400).json({ success: false, error: 'amount mismatch' });
+        }
+
+        const users = getUsers();
+        const user = users.find(u => u.pendingOrderId === orderId);
+        if (!user) {
+            // Bisa jadi webhook telat / order udah dihapus. Tetap 200 biar Pakasir gak retry forever.
+            logInfo(`Pakasir webhook: no user with pendingOrderId=${orderId}`);
+            return res.status(200).json({ success: true, ignored: true });
+        }
+
+        // Idempotency: kalau udah active, skip
+        if (user.status === 'active' && !user.pendingOrderId) {
+            return res.status(200).json({ success: true, already_active: true });
+        }
+
+        // Re-verify ke Pakasir API — JANGAN trust body mentah
+        const verify = await checkPaymentStatus(orderId, amount);
+        if (!verify.success) {
+            logError(`Pakasir webhook re-verify failed for ${orderId}`, new Error(JSON.stringify(verify.error)));
+            return res.status(502).json({ success: false, error: 'verify failed' });
+        }
+        const tx = verify.data && verify.data.transaction;
+        if (!tx || tx.status !== 'completed') {
+            logInfo(`Pakasir webhook: tx status ${tx?.status} (not completed) for ${orderId}`);
+            return res.status(200).json({ success: true, status: tx?.status || 'unknown' });
+        }
+
+        // Aman, aktifkan user
+        const expireDate = tambahHari(MASA_AKTIF_HARI);
+        updateUser(user.nim, {
+            status: 'active',
+            activatedAt: new Date().toISOString(),
+            expireAt: expireDate,
+            pendingOrderId: null,
+        });
+
+        await sendTele(
+            user.chatId,
+            `🎉 *Pembayaran Sukses!*\n\nMakasih ya! Akun kamu (NIM: ${user.nim}) udah resmi *AKTIF*.\n\n⏰ *Masa Aktif:* ${MASA_AKTIF_HARI} hari\n📅 *Berlaku Sampai:* ${new Date(expireDate).toLocaleDateString('id-ID')}\n\nSekarang kamu bisa duduk tenang, urusan absen biar bot yang handle.`
+        );
+
+        const uname = user.username || 'Tanpa Username';
+        const notifAdmin = `💸 *CUAN MASUK BOS!* 💸\n\n👤 *Nama:* ${user.nama}\n🆔 *NIM:* ${user.nim}\n💬 *Tele:* ${uname}\n💳 *Status:* LUNAS (Pakasir)\n💰 *Amount:* Rp${amount}\n💳 *Method:* ${tx.payment_method || '-'}\n⏰ *Masa Aktif:* ${MASA_AKTIF_HARI} hari\n\nSistem berhasil mengaktifkan pelanggan baru! 🚀`;
+        await sendTele(ADMIN_ID, notifAdmin);
+
+        logInfo(`User ${user.nim} activated via Pakasir payment (verified)`);
+
+        return res.status(200).json({ success: true });
     } catch (error) {
         logError('Pakasir webhook error', error);
-        res.status(500).json({ success: false });
+        return res.status(500).json({ success: false });
     }
+}
+
+// Route utama dengan secret di path
+app.post('/webhook/pakasir/:secret', handlePakasirWebhook);
+
+// Backward compat — endpoint lama, tetep aktif tapi WAJIB pakai secret juga.
+// Kasih secret via header X-Webhook-Secret atau query ?secret=...
+app.post('/webhook/pakasir', async (req, res) => {
+    req.params = req.params || {};
+    req.params.secret = req.headers['x-webhook-secret'] || req.query.secret || '';
+    return handlePakasirWebhook(req, res);
 });
 
 // === WEBHOOK PAYMENKU (Legacy - dapat dihapus jika sudah tidak digunakan) ===
@@ -732,6 +804,23 @@ async function handleHapusAkun(chatId) {
     logInfo(`User ${user.nim} (${user.nama}) deleted their account`);
 }
 
+async function handleRedeem(chatId, parts) {
+    if (parts.length < 2) {
+        return sendTele(chatId, '🔑 *Redeem Key*\n\nFormat: `/redeem KODE`\n\nContoh: `/redeem SPADA-ABCD-EFGH-IJKL-MNOP`');
+    }
+
+    const code = parts[1];
+    const result = await redeemKey(chatId, code);
+
+    await sendTele(chatId, result.message);
+
+    // Notif admin jika berhasil
+    if (result.success) {
+        const ADMIN_ID = process.env.ADMIN_ID;
+        await sendTele(ADMIN_ID, `🔑 *Key Redeemed!*\n\nNIM: ${result.nim}\nKey: \`${code}\`\nDurasi: ${result.duration} hari\nTipe: ${result.isExtend ? 'Perpanjangan' : 'Aktivasi Baru'}`);
+    }
+}
+
 async function handleAdminHapus(chatId, nim) {
     const userToDelete = getUserByNIM(nim);
 
@@ -786,6 +875,12 @@ async function handleCommands() {
                 const callbackData = callbackQuery.data;
 
                 await answerCallback(callbackQuery.id);
+
+                // Admin callbacks
+                if (callbackData.startsWith('adm_') && chatId === ADMIN_ID) {
+                    await handleAdminCallback(chatId, callbackData);
+                    continue;
+                }
 
                 if (callbackData === 'cmd_status') {
                     await handleStatus(chatId);
@@ -853,10 +948,14 @@ async function handleCommands() {
                 await handleUpdateNama(chatId, parts);
             } else if (text === '/hapus') {
                 await handleHapusAkun(chatId);
+            } else if (text.startsWith('/redeem')) {
+                await handleRedeem(chatId, parts);
             }
             // Admin commands
             else if (chatId === ADMIN_ID) {
-                if (text === '/list') {
+                if (text === '/admin') {
+                    await handleAdminPanel(chatId);
+                } else if (text === '/list') {
                     await handleAdminList(chatId);
                 } else if (text === '/adminhelp') {
                     await handleAdminHelp(chatId);
@@ -874,6 +973,10 @@ async function handleCommands() {
                     await handleAdminMasuk(chatId, parts[1]);
                 } else if (text.startsWith('/adminhapus ')) {
                     await handleAdminHapus(chatId, parts[1]);
+                } else if (text.startsWith('/broadcast ')) {
+                    await handleBroadcast(chatId, text.replace('/broadcast ', ''));
+                } else if (text.startsWith('/genkey')) {
+                    await handleAdminGenerateKey(chatId, parts.slice(1));
                 }
             }
         }
@@ -883,8 +986,21 @@ async function handleCommands() {
 }
 
 // === AUTO ABSEN SCHEDULER ===
-cron.schedule('*/5 * * * *', async () => {
+// Jalankan setiap 7 menit (bukan 5) untuk pola yang kurang predictable
+cron.schedule('*/7 * * * *', async () => {
     try {
+        // Cek safeguard: apakah sistem sedang pause?
+        if (safeguard.isPausedNow()) {
+            logInfo('Auto attendance skipped - system paused (backoff/ban protection)');
+            return;
+        }
+
+        // Cek safeguard: apakah daily limit tercapai?
+        if (!safeguard.canMakeRequest()) {
+            logInfo('Auto attendance skipped - daily request limit reached');
+            return;
+        }
+
         logInfo('Running auto attendance check...');
 
         const now = new Date();
@@ -907,6 +1023,9 @@ cron.schedule('*/5 * * * *', async () => {
             return true;
         });
 
+        // Shuffle urutan user agar tidak selalu urutan yang sama
+        const shuffledAktif = [...aktif].sort(() => Math.random() - 0.5);
+
         for (const m of matkuls) {
             const [jam, mnt] = m.jam.split(':');
             const target = new Date();
@@ -914,19 +1033,30 @@ cron.schedule('*/5 * * * *', async () => {
             const diff = (now - target) / (1000 * 60);
 
             if (diff >= -5 && diff <= 60) {
-                for (const u of aktif) {
+                // Batch limit: hanya proses 4 user per cycle, sisanya cycle berikutnya
+                const batch = safeguard.getUserBatch(shuffledAktif, m.id);
+
+                for (const u of batch) {
+                    // Cek lagi apakah masih boleh request
+                    if (safeguard.isPausedNow() || !safeguard.canMakeRequest()) {
+                        logInfo('Stopping batch - safeguard triggered');
+                        break;
+                    }
+
+                    // Per-user jitter: tambah delay random 30-120 detik antar user
+                    const userJitter = Math.floor(Math.random() * 90000) + 30000; // 30-120 detik
+                    await new Promise(r => setTimeout(r, userJitter));
+
                     const result = await prosesAbsen(u, m, false);
                     // Kirim notif untuk: berhasil absen, sudah hadir, atau error
                     if (result.message) {
                         await sendTele(u.chatId, result.message);
                     }
-                    // Queue system sudah handle delay
                 }
-                // Queue system sudah handle delay
             }
         }
 
-        logInfo('Auto attendance check completed');
+        logInfo(`Auto attendance check completed. Status: ${JSON.stringify(safeguard.getStatus())}`);
     } catch (error) {
         logError('Auto attendance error', error);
     }

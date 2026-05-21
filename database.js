@@ -196,6 +196,60 @@ if (!fs.existsSync(ACHIEVEMENTS_FILE)) {
     fs.writeFileSync(ACHIEVEMENTS_FILE, JSON.stringify({}));
 }
 
+// === KEY SYSTEM ===
+const KEYS_FILE = 'keys.json';
+
+if (!fs.existsSync(KEYS_FILE)) {
+    fs.writeFileSync(KEYS_FILE, JSON.stringify([]));
+}
+
+export function getKeys() {
+    try {
+        return JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
+    } catch (error) {
+        logError('Error reading keys', error);
+        return [];
+    }
+}
+
+export function saveKeys(keys) {
+    try {
+        fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
+    } catch (error) {
+        logError('Error saving keys', error);
+    }
+}
+
+export function addKey(key) {
+    const keys = getKeys();
+    keys.push(key);
+    saveKeys(keys);
+}
+
+export function findKey(code) {
+    const keys = getKeys();
+    return keys.find(k => k.code === code);
+}
+
+export function markKeyUsed(code, nim) {
+    const keys = getKeys();
+    const index = keys.findIndex(k => k.code === code);
+    if (index !== -1) {
+        keys[index].used = true;
+        keys[index].usedBy = nim;
+        keys[index].usedAt = new Date().toISOString();
+        saveKeys(keys);
+        return keys[index];
+    }
+    return null;
+}
+
+export function deleteKey(code) {
+    let keys = getKeys();
+    keys = keys.filter(k => k.code !== code);
+    saveKeys(keys);
+}
+
 export function checkAndAwardAchievements(nim) {
     try {
         const achievements = JSON.parse(fs.readFileSync(ACHIEVEMENTS_FILE, 'utf8'));
