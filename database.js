@@ -8,9 +8,30 @@ if (!fs.existsSync(DB_FILE)) {
     fs.writeFileSync(DB_FILE, JSON.stringify([]));
 }
 
+function readJsonFile(file, fallback) {
+    if (!fs.existsSync(file)) {
+        writeJsonFile(file, fallback);
+        return fallback;
+    }
+
+    const raw = fs.readFileSync(file, 'utf8').trim();
+    if (!raw) {
+        writeJsonFile(file, fallback);
+        return fallback;
+    }
+
+    return JSON.parse(raw);
+}
+
+function writeJsonFile(file, data) {
+    const tempFile = `${file}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2));
+    fs.renameSync(tempFile, file);
+}
+
 export function getUsers() {
     try {
-        const data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        const data = readJsonFile(DB_FILE, []);
         return data.map(user => ({
             ...user,
             pass: user.pass ? decrypt(user.pass) : ''
@@ -27,7 +48,7 @@ export function saveUsers(users) {
             ...user,
             pass: user.pass ? encrypt(user.pass) : ''
         }));
-        fs.writeFileSync(DB_FILE, JSON.stringify(encryptedUsers, null, 2));
+        writeJsonFile(DB_FILE, encryptedUsers);
     } catch (error) {
         logError('Error saving users', error);
     }
@@ -87,7 +108,7 @@ if (!fs.existsSync(HISTORY_FILE)) {
 
 export function saveAttendanceHistory(nim, matkul, status, persentase) {
     try {
-        const history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+        const history = readJsonFile(HISTORY_FILE, {});
 
         if (!history[nim]) {
             history[nim] = [];
@@ -106,7 +127,7 @@ export function saveAttendanceHistory(nim, matkul, status, persentase) {
             history[nim] = history[nim].slice(0, 50);
         }
 
-        fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
+        writeJsonFile(HISTORY_FILE, history);
     } catch (error) {
         logError('Error saving attendance history', error);
     }
@@ -114,7 +135,7 @@ export function saveAttendanceHistory(nim, matkul, status, persentase) {
 
 export function getAttendanceHistory(nim, limit = 10) {
     try {
-        const history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+        const history = readJsonFile(HISTORY_FILE, {});
         return (history[nim] || []).slice(0, limit);
     } catch (error) {
         logError('Error reading attendance history', error);
@@ -124,7 +145,7 @@ export function getAttendanceHistory(nim, limit = 10) {
 
 export function getWeeklyStats(nim) {
     try {
-        const history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+        const history = readJsonFile(HISTORY_FILE, {});
         const userHistory = history[nim] || [];
 
         const oneWeekAgo = new Date();
@@ -205,7 +226,7 @@ if (!fs.existsSync(KEYS_FILE)) {
 
 export function getKeys() {
     try {
-        return JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
+        return readJsonFile(KEYS_FILE, []);
     } catch (error) {
         logError('Error reading keys', error);
         return [];
@@ -214,7 +235,7 @@ export function getKeys() {
 
 export function saveKeys(keys) {
     try {
-        fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
+        writeJsonFile(KEYS_FILE, keys);
     } catch (error) {
         logError('Error saving keys', error);
     }
@@ -252,8 +273,8 @@ export function deleteKey(code) {
 
 export function checkAndAwardAchievements(nim) {
     try {
-        const achievements = JSON.parse(fs.readFileSync(ACHIEVEMENTS_FILE, 'utf8'));
-        const history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+        const achievements = readJsonFile(ACHIEVEMENTS_FILE, {});
+        const history = readJsonFile(HISTORY_FILE, {});
 
         if (!achievements[nim]) {
             achievements[nim] = {
@@ -295,7 +316,7 @@ export function checkAndAwardAchievements(nim) {
             newAchievements.push('💯 Centurion - Perfect attendance di satu matkul!');
         }
 
-        fs.writeFileSync(ACHIEVEMENTS_FILE, JSON.stringify(achievements, null, 2));
+        writeJsonFile(ACHIEVEMENTS_FILE, achievements);
 
         return newAchievements;
     } catch (error) {
@@ -306,7 +327,7 @@ export function checkAndAwardAchievements(nim) {
 
 export function getUserAchievements(nim) {
     try {
-        const achievements = JSON.parse(fs.readFileSync(ACHIEVEMENTS_FILE, 'utf8'));
+        const achievements = readJsonFile(ACHIEVEMENTS_FILE, {});
         return achievements[nim] || {
             perfectWeek: false,
             earlyBird: 0,
