@@ -4,7 +4,6 @@ import { getUsers, updateUser, logInfo, logError, getAttendanceHistory } from '.
 import { getJadwalHariIni, getAllMatkul, JADWAL_KULIAH } from './jadwal.js';
 import { safeguard } from './safeguard.js';
 import { requestQueue } from './queue.js';
-import { proxyRotator } from './proxy.js';
 import { hitungSisaHari, tambahHari } from './utils.js';
 import { prosesAbsen } from './spada.js';
 import { handleAdminKeyList, handleAdminKeyHistory, handleAdminKeyClean, handleKeyGenCallback } from './keySystem.js';
@@ -71,8 +70,7 @@ function adminSafeguardMenu() {
 function adminSystemMenu() {
     return [
         [
-            { text: '📈 Queue Status', callback_data: 'adm_sys_queue' },
-            { text: '🌐 Proxy Status', callback_data: 'adm_sys_proxy' }
+            { text: '📈 Queue Status', callback_data: 'adm_sys_queue' }
         ],
         [
             { text: '📅 Jadwal Hari Ini', callback_data: 'adm_sys_jadwal' },
@@ -175,8 +173,6 @@ export async function handleAdminCallback(chatId, callbackData) {
             return sendTeleWithKeyboard(chatId, '⚙️ *System Info*\n\nPilih info:', adminSystemMenu());
         case 'adm_sys_queue':
             return handleQueueStatus(chatId);
-        case 'adm_sys_proxy':
-            return handleProxyStatus(chatId);
         case 'adm_sys_jadwal':
             return handleJadwalStatus(chatId);
         case 'adm_sys_uptime':
@@ -385,26 +381,6 @@ async function handleQueueStatus(chatId) {
     msg += `⚙️ Processing: ${status.processing ? 'Ya' : 'Tidak'}\n`;
     msg += `📊 Request jam ini: ${status.requestsThisHour}/${status.maxPerHour}\n`;
     msg += `🕐 Peak hour: ${status.isPeakHour ? 'Ya (delay normal)' : 'Tidak (delay lebih lama)'}\n`;
-
-    await sendTeleWithKeyboard(chatId, msg, adminSystemMenu());
-}
-
-async function handleProxyStatus(chatId) {
-    const status = proxyRotator.getStatus();
-
-    let msg = `🌐 *Proxy Status*\n━━━━━━━━━━━━━━━━━━\n\n`;
-
-    if (status.total === 0) {
-        msg += `⚠️ Tidak ada proxy dikonfigurasi.\n`;
-        msg += `Bot menggunakan IP VPS langsung.\n\n`;
-        msg += `💡 Tambahkan proxy di .env:\n`;
-        msg += `\`PROXY_LIST=http://user:pass@host:port\``;
-    } else {
-        msg += `📊 Total: ${status.total}\n`;
-        msg += `✅ Active: ${status.active}\n`;
-        msg += `❌ Failed: ${status.failed}\n`;
-        msg += `🔄 Mode: ${status.mode}\n`;
-    }
 
     await sendTeleWithKeyboard(chatId, msg, adminSystemMenu());
 }

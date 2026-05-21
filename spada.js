@@ -4,7 +4,6 @@ import { wrapper } from 'axios-cookiejar-support';
 import * as cheerio from 'cheerio';
 import { logError, logAbsensi, saveAttendanceHistory, checkAndAwardAchievements } from './database.js';
 import { requestQueue } from './queue.js';
-import { proxyRotator } from './proxy.js';
 import { safeguard } from './safeguard.js';
 
 // === SESSION CACHE ===
@@ -119,10 +118,6 @@ async function _prosesAbsenInternal(mhs, matkul, forceNotif = false, retryCount 
     const randomUA = session.userAgent;
     const randomLang = acceptLanguages[Math.floor(Math.random() * acceptLanguages.length)];
 
-    // Dapatkan proxy untuk user ini
-    const proxyUrl = proxyRotator.getProxyForUser(mhs.nim);
-    const proxyAgent = proxyRotator.createAgent(proxyUrl);
-
     const clientConfig = {
         jar: session.jar,
         withCredentials: true,
@@ -143,13 +138,6 @@ async function _prosesAbsenInternal(mhs, matkul, forceNotif = false, retryCount 
             'DNT': '1'
         }
     };
-
-    // Tambahkan proxy agent jika tersedia
-    if (proxyAgent) {
-        clientConfig.httpAgent = proxyAgent;
-        clientConfig.httpsAgent = proxyAgent;
-        clientConfig.proxy = false; // Disable axios built-in proxy, pakai agent
-    }
 
     const client = wrapper(axios.create(clientConfig));
 
@@ -332,12 +320,6 @@ async function _prosesAbsenInternal(mhs, matkul, forceNotif = false, retryCount 
         if (error.response?.status === 401 || error.response?.status === 403 ||
             error.message?.includes('Login gagal')) {
             invalidateSession(mhs.nim);
-        }
-
-        // Mark proxy as failed on connection errors
-        if (proxyUrl && (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED' ||
-            error.code === 'ECONNRESET' || error.code === 'EPROTO')) {
-            proxyRotator.markFailed(proxyUrl);
         }
 
         // Jika safeguard bilang ban detected, jangan retry - langsung stop
