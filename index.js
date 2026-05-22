@@ -39,6 +39,7 @@ const ADMIN_ID = process.env.ADMIN_ID;
 const HARGA_BOT = parseInt(process.env.HARGA_BOT) || 2000;
 const PORT = process.env.PORT || 3000;
 const MASA_AKTIF_HARI = parseInt(process.env.MASA_AKTIF_HARI) || 30;
+const CRON_OPTIONS = { timezone: 'Asia/Jakarta' };
 
 if (!TELE_TOKEN || !ADMIN_ID) {
     console.error('❌ Environment variables tidak lengkap! Cek file .env');
@@ -1060,7 +1061,7 @@ cron.schedule('*/15 * * * *', async () => {
     } catch (error) {
         logError('Auto attendance error', error);
     }
-});
+}, CRON_OPTIONS);
 
 // === EXPIRY REMINDER ===
 cron.schedule('0 9 * * *', async () => {
@@ -1090,7 +1091,7 @@ cron.schedule('0 9 * * *', async () => {
     } catch (error) {
         logError('Expiry reminder error', error);
     }
-});
+}, CRON_OPTIONS);
 
 // === AUTO RESET SKIP MODE ===
 cron.schedule('0 0 * * *', async () => {
@@ -1111,7 +1112,7 @@ cron.schedule('0 0 * * *', async () => {
     } catch (error) {
         logError('Skip mode reset error', error);
     }
-});
+}, CRON_OPTIONS);
 
 // === START SERVER ===
 async function main() {

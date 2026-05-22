@@ -171,12 +171,14 @@ async function _prosesAbsenInternal(mhs, matkul, forceNotif = false, retryCount 
     const client = wrapper(axios.create(clientConfig));
 
     const d = new Date();
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const namaBulan = months[d.getMonth()];
+    const monthsEn = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const monthsId = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+    const monthNames = [...new Set([monthsEn[d.getMonth()], monthsId[d.getMonth()]])];
     const tahun = d.getFullYear();
 
-    const tglHariIni = `${d.getDate()} ${namaBulan} ${tahun}`;
-    const bulanIniString = `${namaBulan} ${tahun}`;
+    const dateStringsToday = monthNames.map(month => `${d.getDate()} ${month} ${tahun}`);
+    const monthStringsThisMonth = monthNames.map(month => `${month} ${tahun}`);
+    const tglHariIni = dateStringsToday[0];
 
     try {
         // Jika session baru, lakukan login. Jika reuse session, skip login.
@@ -245,14 +247,14 @@ async function _prosesAbsenInternal(mhs, matkul, forceNotif = false, retryCount 
         $('tr').each((i, el) => {
             const barisText = $(el).text();
 
-            if (barisText.includes(bulanIniString)) {
+            if (monthStringsThisMonth.some(monthText => barisText.includes(monthText))) {
                 const kolomStatus = $(el).find('td.statuscol').text().trim().toUpperCase();
                 if (kolomStatus === 'HADIR' || kolomStatus === 'PRESENT') {
                     hitungHadirBulanIni++;
                 }
             }
 
-            if (barisText.includes(tglHariIni)) {
+            if (dateStringsToday.some(dateText => barisText.includes(dateText))) {
                 const kolomStatusHariIni = $(el).find('td.statuscol').text().trim().toUpperCase();
                 if (kolomStatusHariIni === 'HADIR' || kolomStatusHariIni === 'PRESENT') {
                     sudahAbsenBenaran = true;
