@@ -5,11 +5,40 @@ import * as cheerio from 'cheerio';
 import { logError, logAbsensi, saveAttendanceHistory, checkAndAwardAchievements } from './database.js';
 import { requestQueue } from './queue.js';
 import { safeguard } from './safeguard.js';
+import { sendTele } from './telegram.js';
 
 // === SESSION CACHE ===
 // Simpan session (cookie jar) per user agar tidak login ulang setiap request
 const sessionCache = new Map(); // key: nim, value: { jar, lastUsed, userAgent }
 const SESSION_TTL = 25 * 60 * 1000; // 25 menit session valid
+const ADMIN_BAN_NOTICE_COOLDOWN = 30 * 60 * 1000;
+let lastAdminBanNoticeAt = 0;
+
+async function notifyAdminBanDetected(mhs, matkul, error, safeguardStatus) {
+    const adminId = process.env.ADMIN_ID;
+    if (!adminId) return;
+
+    const now = Date.now();
+    if (now - lastAdminBanNoticeAt < ADMIN_BAN_NOTICE_COOLDOWN) return;
+    lastAdminBanNoticeAt = now;
+
+    const reason = error.response?.status
+        ? `HTTP ${error.response.status}`
+        : error.code || error.message || 'Unknown error';
+
+    await sendTele(
+        adminId,
+        `🚨 *Peringatan VPS/IP SPADA*\n\n` +
+        `Safeguard mendeteksi kemungkinan VPS/IP diblokir atau dibatasi oleh SPADA.\n\n` +
+        `👤 *NIM terakhir:* ${mhs.nim}\n` +
+        `📖 *Matkul:* ${matkul.nama}\n` +
+        `⚠️ *Penyebab:* ${reason}\n` +
+        `⏸️ *Pause:* ${safeguardStatus.pauseRemaining}\n` +
+        `📊 *Ban indicator:* ${safeguardStatus.banIndicators}\n` +
+        `📈 *Request harian:* ${safeguardStatus.dailyRequests}\n\n` +
+        `Sistem auto-pause. Sebaiknya jangan restart paksa sampai pause selesai.`
+    );
+}
 
 function getOrCreateSession(nim) {
     const now = Date.now();
@@ -324,6 +353,8 @@ async function _prosesAbsenInternal(mhs, matkul, forceNotif = false, retryCount 
 
         // Jika safeguard bilang ban detected, jangan retry - langsung stop
         if (safeguardAction === 'ban_detected') {
+            await notifyAdminBanDetected(mhs, matkul, error, safeguard.getStatus());
+
             if (forceNotif) {
                 return {
                     success: false,
