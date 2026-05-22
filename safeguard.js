@@ -5,7 +5,7 @@ class Safeguard {
     constructor() {
         // === DAILY REQUEST CAP ===
         this.dailyRequestCount = 0;
-        this.dailyLimit = 50; // Max 50 request ke SPADA per hari
+        this.dailyLimit = 30; // Max 30 request ke SPADA per hari
         this.lastDailyReset = this._getToday();
 
         // === AUTO BACKOFF ===
@@ -21,7 +21,7 @@ class Safeguard {
         this.lastCacheClear = this._getToday();
 
         // === BATCH LIMIT ===
-        this.maxUsersPerCycle = 4; // Max 4 user diproses per cycle cron
+        this.maxUsersPerCycle = 2; // Max 2 user diproses per cycle cron
         this.userCycleIndex = new Map(); // Track posisi user per matkul
 
         // === BAN DETECTION ===

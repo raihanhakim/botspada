@@ -8,12 +8,12 @@ class RequestQueue {
         this.hourlyResetTime = Date.now();
 
         // SMART DELAY MODE - Natural pattern
-        // Delay 90-180 detik antar request (1.5-3 menit) - lebih aman
-        this.minDelayBetweenRequests = 90000; // 90 detik
-        this.maxDelayBetweenRequests = 180000; // 180 detik
+        // Delay 2-4 menit antar request agar lebih aman di IP VPS.
+        this.minDelayBetweenRequests = 120000; // 120 detik
+        this.maxDelayBetweenRequests = 240000; // 240 detik
 
         // Batasi max request per jam
-        this.maxRequestsPerHour = 15; // Turunkan dari 20 ke 15 untuk lebih aman
+        this.maxRequestsPerHour = 8;
 
         // Time-of-day awareness: kurangi agresivitas di luar jam kuliah
         this.peakHours = { start: 7, end: 17 }; // Jam 7-17 = jam kuliah

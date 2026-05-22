@@ -986,8 +986,8 @@ async function handleCommands() {
 }
 
 // === AUTO ABSEN SCHEDULER ===
-// Jalankan setiap 7 menit (bukan 5) untuk pola yang kurang predictable
-cron.schedule('*/7 * * * *', async () => {
+// Jalankan setiap 15 menit agar traffic dari VPS lebih konservatif.
+cron.schedule('*/15 * * * *', async () => {
     try {
         // Cek safeguard: apakah sistem sedang pause?
         if (safeguard.isPausedNow()) {
@@ -1033,7 +1033,7 @@ cron.schedule('*/7 * * * *', async () => {
             const diff = (now - target) / (1000 * 60);
 
             if (diff >= -5 && diff <= 60) {
-                // Batch limit: hanya proses 4 user per cycle, sisanya cycle berikutnya
+                // Batch limit: hanya proses sebagian user per cycle, sisanya cycle berikutnya
                 const batch = safeguard.getUserBatch(shuffledAktif, m.id);
 
                 for (const u of batch) {
